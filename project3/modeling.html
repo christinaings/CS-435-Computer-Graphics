@@ -1,28 +1,17 @@
-<!DOCTYPE html>
 <html>
-<style type="text/css">
-    canvas { background: blue; }
-</style>
 
-<p> </p>
-<button id = "Button5">Down</button>
-<button id = "Button6">Up</button>
-<button id = "Button7">Left</button>
-<button id = "Button8">Right</button>
-<p> </p>
 <script id="vertex-shader" type="x-shader/x-vertex">
-
 attribute  vec4 vPosition;
 attribute  vec4 vColor;
 varying vec4 fColor;
 
-uniform mat4 modelView;
-uniform mat4 projection;
+uniform mat4 modelViewMatrix;
+uniform mat4 projectionMatrix;
 
 void main()
 {
-    gl_Position = projection*modelView*vPosition;
     fColor = vColor;
+    gl_Position = projectionMatrix * modelViewMatrix * vPosition;
 }
 </script>
 
@@ -30,10 +19,9 @@ void main()
 
 precision mediump float;
 
-varying vec4 fColor;
+varying  vec4 fColor;
 
-void
-main()
+void main()
 {
     gl_FragColor = fColor;
 }
@@ -44,10 +32,15 @@ main()
 <script type="text/javascript" src="../Common/MV.js"></script>
 <script type="text/javascript" src="modeling.js"></script>
 
+<button id = "Button5">Left</button>
+<button id = "Button6">Right</button>
+<button id = "Button7">Up</button>
+<button id = "Button8">Down</button><br/>
+
+
 <body>
-<canvas id="gl-canvas" width="512" height="512">
+<canvas id="gl-canvas" width="512"" height="512"
 Oops ... your browser doesn't support the HTML5 canvas element
 </canvas>
-
 </body>
 </html>
