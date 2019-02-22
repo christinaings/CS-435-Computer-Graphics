@@ -1,0 +1,375 @@
+"use strict";
+
+var canvas;
+var gl;
+
+var maxNumTriangles = 200;
+var maxNumVertices  = 3 * maxNumTriangles;
+var index = 0;
+var first = true;
+
+var mouse_down = false;
+var key_down = false;
+
+var t1, t2, t3, t4;
+
+var cIndex = -1;
+
+var colors = [
+    vec4( 1.0, 0.0, 0.0, 1.0 ),  // red 1
+    vec4( 0.0, 1.0, 0.0, 1.0 ),  // green 3
+    vec4( 0.0, 0.0, 1.0, 1.0 ),  // blue 4
+    vec4( 1.0, 0.0, 1.0, 1.0 ),  // magenta 5
+    vec4( 0.0, 1.0, 1.0, 1.0 ),   // cyan 6
+    vec4( 1.0, 1.0, 0.0, 1.0 )  // yellow 2
+];
+
+
+var projection; // projection matrix uniform shader variable location
+var transformation; // projection matrix uniform shader variable location
+var vPosition;
+var vColor;
+
+var i = 6;
+
+// state representation
+var Blocks = []; // seven blocks
+var BlockIdToBeMoved; // this black is moving
+var MoveCount;
+var OldX;
+var OldY;
+
+
+function CPiece (n, color, x0, y0, x1, y1, x2, y2, x3, y3) {
+    this.NumVertices = n+1;
+    this.color = color;
+    this.points=[];
+    this.colors=[];
+    if (n ==4){
+      this.points.push(vec2(x0, y0));
+      this.points.push(vec2(x1, y1));
+      this.points.push(vec2(x2, y2));
+      this.points.push(vec2(x3, y3));
+      this.points.push(vec2(x1, y1));
+      for (var i=0; i<5; i++) this.colors.push(color);
+    }
+    else{
+        this.NumVertices = 42;
+        this.points.push(vec2(x0,y0)); //center of the circle
+
+        var radiusOfCircle;
+        if (cIndex == 0) radiusOfCircle= .1;
+        else if(cIndex ==1) radiusOfCircle = .05;
+        else if (cIndex ==2) radiusOfCircle = .15;
+
+        var anglePerFan = (2*Math.PI) / 40;
+        for(var i = 0; i < 41; i++)
+        {
+          var CirIndex = 2 * i + 2;
+          var angle = anglePerFan * (i+1);
+          var xCoordinate = x0 + Math.cos(angle) * radiusOfCircle;
+          var yCoordinate = y0 + Math.sin(angle) * radiusOfCircle;
+
+          var point = vec2(xCoordinate, yCoordinate);
+          this.points.push(point);
+        }
+
+        for (var i=0; i<42; i++) this.colors.push(color);
+    }
+
+
+    this.Angle = 0;
+
+    this.vBuffer=0;
+    this.cBuffer=0;
+
+    this.OffsetX=0;
+    this.OffsetY=0;
+
+
+    this.UpdateOffset = function(dx, dy) {
+        this.OffsetX += dx;
+        this.OffsetY += dy;
+
+    }
+
+    this.SetOffset = function(dx, dy) {
+        this.OffsetX = dx;
+        this.OffsetY = dy;
+        console.log(dx,dy);
+    }
+
+    this.isLeft = function(x, y, id) {	// Is Point (x, y) located to the left when walking from id to id+1?
+        var id1=(id+1)%this.NumVertices;
+        console.log("Comparing to...");
+       console.log(this.points[id][0],this.points[id][1]);
+        console.log(this.points[id1][0],this.points[id1][1]);
+        return (y-this.points[id][1])*(this.points[id1][0]-this.points[id][0])>(x-this.points[id][0])*(this.points[id1][1]-this.points[id][1]);
+    }
+
+    this.isInTriangle = function(p,a,b,c){
+        var v0 = vec2(c[0]-a[0],c[1]-a[1]);
+        var v1 = vec2(b[0]-a[0],b[1]-a[1]);
+        var v2 = vec2(p[0]-a[0],p[1]-a[1]);
+
+        var dot00 = (v0[0]*v0[0]) + (v0[1]*v0[1]);
+        var dot01 = (v0[0]*v1[0]) + (v0[1]*v1[1]);
+        var dot02 = (v0[0]*v2[0]) + (v0[1]*v2[1]);
+        var dot11 = (v1[0]*v1[0]) + (v1[1]*v1[1]);
+        var dot12 = (v1[0]*v2[0]) + (v1[1]*v2[1]);
+
+        var invDenom = 1/ (dot00 * dot11 - dot01 * dot01);
+
+        var u = (dot11 * dot02 - dot01 * dot12) * invDenom;
+        var v = (dot00 * dot12 - dot01 * dot02) * invDenom;
+
+        return ((u >= 0) && (v >= 0) && (u + v < 1));
+    }
+
+    this.transform = function(x, y) {
+    //  console.log(x,y);
+        var theta = -Math.PI/180*this.Angle;	// in radians
+        var x2 = this.points[0][0] + (x - this.points[0][0]-this.OffsetX) * Math.cos(theta) - (y - this.points[0][1]-this.OffsetY) * Math.sin(theta);
+        var y2 = this.points[0][1] + (x - this.points[0][0]-this.OffsetX) * Math.sin(theta) + (y - this.points[0][1]-this.OffsetY) * Math.cos(theta);
+    //    console.log(x2,y2);
+        return vec2(x2, y2);
+    }
+
+    this.isInside = function(x, y) {
+      //console.log("In isInside");
+        var p= this.transform(x, y);
+        console.log(p[0],p[1]);
+        for (var i=0; i<this.NumVertices-1; i++) {
+
+          console.log("Testing...");
+          console.log(p[0],p[1]);
+            if (this.isInTriangle(p,this.points[0],this.points[i],this.points[i+1])){ return true;}
+
+        }
+        if (this.isInTriangle(p,this.points[0],this.points[this.NumVertices-1],this.points[1])) return true;
+
+        return false;
+    }
+
+    this.init = function() {
+
+        this.vBuffer = gl.createBuffer();
+
+        gl.bindBuffer( gl.ARRAY_BUFFER, this.vBuffer );
+
+        gl.bufferData( gl.ARRAY_BUFFER, flatten(this.points), gl.STATIC_DRAW );
+
+        this.cBuffer = gl.createBuffer();
+
+        gl.bindBuffer( gl.ARRAY_BUFFER, this.cBuffer );
+
+        gl.bufferData( gl.ARRAY_BUFFER, flatten(this.colors), gl.STATIC_DRAW );
+
+    }
+
+    this.draw = function() {
+        var tm=translate(this.points[0][0]+this.OffsetX, this.points[0][1]+this.OffsetY, 0.0);
+        tm=mult(tm, translate(-this.points[0][0], -this.points[0][1], 0.0));
+        gl.uniformMatrix4fv( transformation, gl.TRUE, flatten(tm) );
+
+        gl.bindBuffer( gl.ARRAY_BUFFER, this.vBuffer );
+        gl.vertexAttribPointer( vPosition, 2, gl.FLOAT, false, 0, 0 );
+        gl.enableVertexAttribArray( vPosition );
+
+
+        gl.bindBuffer( gl.ARRAY_BUFFER, this.cBuffer );
+        gl.vertexAttribPointer( vColor, 4, gl.FLOAT, false, 0, 0 );
+        gl.enableVertexAttribArray( vColor );
+
+
+        gl.drawArrays( gl.TRIANGLE_FAN, 0, this.NumVertices );
+
+    }
+
+}
+
+window.onload = function init() {
+  canvas = document.getElementById( "gl-canvas" );
+
+  gl = WebGLUtils.setupWebGL( canvas );
+  if ( !gl ) { alert( "WebGL isn't available" ); }
+
+    document.addEventListener("keydown",function(){
+
+        if (event.keyCode == 49){
+          cIndex = 0;
+        }
+        else if (event.keyCode == 50){
+          cIndex = 1;
+        }
+        else if (event.keyCode == 51){
+          cIndex = 2;
+        }
+        if (event.keyCode == 52){
+          cIndex = 3;
+        }
+        else if (event.keyCode == 53){
+          cIndex = 4;
+        }
+        else if (event.keyCode == 54){
+          cIndex = 5;
+        }
+
+    });
+
+    document.addEventListener("keyup",function(){
+      cIndex = -1;
+    });
+
+    canvas.addEventListener("mousedown", function(event){
+        mouse_down = true;
+
+        var x = event.pageX - canvas.offsetLeft;
+        var y = event.pageY - canvas.offsetTop;
+
+        if (cIndex >= 0){
+            if(cIndex == 3){
+              t1 = vec2(2*x/canvas.width-1 -0.2,
+                  2*(canvas.height-y)/canvas.height-1-0.2);
+              t2 = vec2(2*x/canvas.width-1+0.2,
+                  2*(canvas.height-y)/canvas.height-1 +0.2);
+            }
+            if (cIndex == 4){
+              t1 = vec2(2*x/canvas.width-1 -0.1,
+                2*(canvas.height-y)/canvas.height-1-0.1);
+              t2 = vec2(2*x/canvas.width-1+0.1,
+                2*(canvas.height-y)/canvas.height-1 +0.1);
+            }
+            if (cIndex == 5){
+              t1 = vec2(2*x/canvas.width-1 -0.05,
+                2*(canvas.height-y)/canvas.height-1-0.05);
+              t2 = vec2(2*x/canvas.width-1+0.05,
+                2*(canvas.height-y)/canvas.height-1 +0.05);
+            }
+            if (cIndex < 3){
+              t1 = vec2(2*x/canvas.width-1,
+                2*(canvas.height-y)/canvas.height-1);
+              t2 = vec2(2*x/canvas.width-1,
+                2*(canvas.height-y)/canvas.height-1);
+
+            }
+
+           t3 = vec2(t1[0], t2[1]);
+           t4 = vec2(t2[0], t1[1]);
+
+           if (cIndex > 2){
+             Blocks.push( new CPiece(4, vec4(colors[cIndex]), t1[0], t1[1], t2[0], t2[1], t3[0], t3[1], t4[0], t4[1]));
+           }
+           else{
+            Blocks.push(new CPiece(2, vec4(colors[cIndex]), t1[0], t1[1], t2[0], t2[1], t3[0], t3[1], t4[0], t4[1]));
+           }
+           Blocks[Blocks.length-1].init();
+
+           render();
+          }
+          x = 2*(event.pageX - canvas.offsetLeft)/canvas.width-1;
+          y = 2*(canvas.height-(event.pageY - canvas.offsetTop))/canvas.height-1;
+          if (event.shiftKey) {  // with shift key, rotate counter-clockwise
+            for (var i=Blocks.length-1; i>=0; i--) {	// search from last to first
+              //console.log("Trying to delete");
+              if (Blocks[i].isInside(x, y)) {
+
+                // move Blocks[i] to the top
+                var temp=Blocks[i];
+                for (var j=i; j<Blocks.length-1; j++) Blocks[j]=Blocks[j+1];
+                Blocks[Blocks.length-1]=temp;
+                // rotate the block
+                Blocks.pop();
+                // redraw
+                // render();
+                window.requestAnimFrame(render);
+                return;
+              }
+            }
+            return;
+          }
+
+          for (var i=Blocks.length-1; i>=0; i--) {	// search from last to first
+            console.log(i);
+            if (Blocks[i].isInside(x, y)) {
+              console.log("It's inside");
+            // move Blocks[i] to the top
+              var temp=Blocks[i];
+              for (var j=i; j<Blocks.length-1; j++) Blocks[j]=Blocks[j+1];
+              Blocks[Blocks.length-1]=temp;
+            // remember the one to be moved
+              BlockIdToBeMoved=Blocks.length-1;
+              MoveCount=0;
+              OldX=x;
+              OldY=y;
+              console.log(BlockIdToBeMoved);
+            // redraw
+              window.requestAnimFrame(render);
+            // render();
+              break;
+          }
+
+        }
+    });
+
+    canvas.addEventListener("mouseup", function(event){
+      if (BlockIdToBeMoved>=0){
+        console.log("Shape Released");
+        BlockIdToBeMoved=-1;
+      }
+      mouse_down = false;
+
+    });
+
+    canvas.addEventListener("mousemove", function(event){
+      console.log(BlockIdToBeMoved);
+      if (BlockIdToBeMoved>=0) {  // if dragging
+        console.log("Dragging now...");
+        var x = 2*(event.pageX - canvas.offsetLeft)/canvas.width-1;
+        var y = 2*(canvas.height-(event.pageY - canvas.offsetTop))/canvas.height-1;
+
+
+        Blocks[BlockIdToBeMoved].UpdateOffset(x-OldX, y-OldY);
+        MoveCount++;
+        OldX=x;
+        OldY=y;
+        render();
+        // render();
+      }
+    });
+
+    gl.viewport( 0, 0, canvas.width, canvas.height );
+    gl.clearColor( 0.5, 0.5, 0.5, 1.0 );
+
+    //
+    //  Load shaders and initialize attribute buffers
+    //
+    var program = initShaders( gl, "vertex-shader", "fragment-shader" );
+    gl.useProgram( program );
+
+    // Initial State
+    Blocks=[];
+
+    BlockIdToBeMoved=-1; // no piece selected
+
+    projection = gl.getUniformLocation( program, "projection" );
+    var pm = ortho( 0.0, canvas.width, 0.0, canvas.height, -1.0, 1.0 );
+    gl.uniformMatrix4fv( projection, gl.TRUE, flatten(pm) );
+
+    transformation = gl.getUniformLocation( program, "transformation" );
+
+    vPosition = gl.getAttribLocation( program, "vPosition" );
+    vColor = gl.getAttribLocation( program, "vColor" );
+    render();
+}
+
+
+function render() {
+    gl.clear(gl.COLOR_BUFFER_BIT);
+
+    for (var i=0; i<Blocks.length; i++) {
+        Blocks[i].draw();
+    }
+
+    // window.requestAnimFrame(render);
+}
